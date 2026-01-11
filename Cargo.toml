@@ -1,0 +1,75 @@
+[package]
+name = "sentinel-agent-audit-logger"
+version = "0.1.0"
+edition = "2021"
+authors = ["Raskell <hello@raskell.io>"]
+description = "Structured audit logging agent for Sentinel proxy - compliance-focused logging with PII redaction"
+license = "Apache-2.0"
+repository = "https://github.com/raskell-io/sentinel-agent-audit-logger"
+keywords = ["sentinel", "proxy", "agent", "audit", "logging", "compliance"]
+categories = ["network-programming", "web-programming"]
+readme = "README.md"
+
+[dependencies]
+# Sentinel SDK
+sentinel-agent-sdk = { git = "https://github.com/raskell-io/sentinel-agent-rust-sdk.git", branch = "main" }
+
+# Async runtime
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync", "time", "fs", "net", "io-util"] }
+async-trait = "0.1"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
+
+# Time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# Regex for PII detection
+regex = "1"
+
+# Hashing for redaction
+sha2 = "0.10"
+hex = "0.4"
+
+# Random sampling
+rand = "0.8"
+
+# HTTP client for webhook output
+reqwest = { version = "0.12", features = ["json"], default-features = false, optional = true }
+
+# Kafka support (optional)
+rdkafka = { version = "0.36", features = ["cmake-build"], optional = true }
+
+# CLI argument parsing
+clap = { version = "4", features = ["derive"] }
+
+# UUID for correlation IDs
+uuid = { version = "1", features = ["v4"] }
+
+[features]
+default = ["http-output"]
+http-output = ["reqwest/rustls-tls"]
+kafka-output = ["rdkafka"]
+full = ["http-output", "kafka-output"]
+
+[dev-dependencies]
+tokio-test = "0.4"
+tempfile = "3"
+
+[[bin]]
+name = "sentinel-agent-audit-logger"
+path = "src/main.rs"
+
+[lib]
+name = "sentinel_agent_audit_logger"
+path = "src/lib.rs"
