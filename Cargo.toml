@@ -6,7 +6,7 @@ authors = ["Raskell <hello@raskell.io>"]
 description = "Structured audit logging agent for Sentinel proxy - compliance-focused logging with PII redaction"
 license = "Apache-2.0"
 repository = "https://github.com/raskell-io/sentinel-agent-audit-logger"
-keywords = ["sentinel", "proxy", "agent", "audit", "logging", "compliance"]
+keywords = ["sentinel", "proxy", "agent", "audit", "logging"]
 categories = ["network-programming", "web-programming"]
 readme = "README.md"
 
