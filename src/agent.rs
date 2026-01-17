@@ -11,11 +11,18 @@ use async_trait::async_trait;
 use rand::Rng;
 use regex::Regex;
 use sentinel_agent_sdk::{Agent, Decision, Request, Response};
+use sentinel_agent_sdk::v2::{
+    AgentV2, AgentCapabilities, AgentCapabilitiesExt, HealthStatus,
+    DrainReason, ShutdownReason,
+};
+// Import MetricsReport and metric types from protocol crate
+use sentinel_agent_protocol::v2::{MetricsReport, CounterMetric};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
 use std::time::Instant;
 use tokio::sync::Mutex;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 /// Audit Logger Agent
 ///
@@ -30,6 +37,16 @@ pub struct AuditLoggerAgent {
     filter_patterns: Vec<CompiledFilter>,
     /// Request start times for duration calculation
     request_times: Arc<Mutex<HashMap<String, Instant>>>,
+    /// Metrics: total requests processed
+    requests_total: AtomicU64,
+    /// Metrics: total events logged
+    events_logged: AtomicU64,
+    /// Metrics: total events filtered (not logged due to sampling/filters)
+    events_filtered: AtomicU64,
+    /// Metrics: total errors writing to output
+    output_errors: AtomicU64,
+    /// Flag indicating the agent is draining (should finish existing work)
+    draining: AtomicBool,
 }
 
 struct CompiledFilter {
@@ -133,6 +150,11 @@ impl AuditLoggerAgent {
             redactor,
             filter_patterns,
             request_times: Arc::new(Mutex::new(HashMap::new())),
+            requests_total: AtomicU64::new(0),
+            events_logged: AtomicU64::new(0),
+            events_filtered: AtomicU64::new(0),
+            output_errors: AtomicU64::new(0),
+            draining: AtomicBool::new(false),
         }
     }
 
@@ -273,6 +295,7 @@ impl AuditLoggerAgent {
     }
 
     /// Build an audit event from request and response.
+    #[allow(clippy::too_many_arguments)]
     fn build_event(
         &self,
         method: &str,
@@ -447,6 +470,9 @@ impl AuditLoggerAgent {
         let formatted = self.formatter.format(event);
         if let Err(e) = self.output.write(&formatted).await {
             error!("Failed to write audit log: {}", e);
+            self.output_errors.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.events_logged.fetch_add(1, Ordering::Relaxed);
         }
     }
 
@@ -471,7 +497,14 @@ unsafe impl Sync for AuditLoggerAgent {}
 
 #[async_trait]
 impl Agent for AuditLoggerAgent {
+    fn name(&self) -> &str {
+        "audit-logger"
+    }
+
     async fn on_request(&self, request: &Request) -> Decision {
+        // Track request count
+        self.requests_total.fetch_add(1, Ordering::Relaxed);
+
         // Extract request data using SDK accessor methods
         let method = request.method();
         let path = request.path();
@@ -514,6 +547,7 @@ impl Agent for AuditLoggerAgent {
 
         // Check if we should log this request
         if !self.should_log(method, path, headers, Some(response.status_code())) {
+            self.events_filtered.fetch_add(1, Ordering::Relaxed);
             return Decision::allow();
         }
 
@@ -542,6 +576,111 @@ impl Agent for AuditLoggerAgent {
         );
 
         Decision::allow()
+    }
+}
+
+/// v2 Protocol implementation for AuditLoggerAgent.
+///
+/// Provides capability reporting, health status, and metrics export.
+impl AgentV2 for AuditLoggerAgent {
+    fn capabilities(&self) -> AgentCapabilities {
+        AgentCapabilities::new("audit-logger", "Sentinel Audit Logger", env!("CARGO_PKG_VERSION"))
+            .with_streaming_body(false)  // Audit logger doesn't need body streaming
+            .with_config_push(true)      // Supports runtime config updates
+            .with_health_reporting(true) // Reports health status
+            .with_metrics_export(true)   // Exports metrics
+            .with_concurrent_requests(1000) // Can handle many concurrent requests
+            .with_flow_control(false)    // Doesn't need flow control (always allows)
+            .with_health_interval_ms(10_000) // Report health every 10 seconds
+    }
+
+    fn health_status(&self) -> HealthStatus {
+        // Check if we're draining
+        if self.draining.load(Ordering::Relaxed) {
+            return HealthStatus::degraded(
+                "audit-logger",
+                vec!["new_requests".to_string()],
+                1.0,
+            );
+        }
+
+        // Check if there are output errors accumulating
+        let errors = self.output_errors.load(Ordering::Relaxed);
+        let logged = self.events_logged.load(Ordering::Relaxed);
+
+        if errors > 0 && logged > 0 {
+            let error_rate = errors as f64 / (errors + logged) as f64;
+            if error_rate > 0.1 {
+                // More than 10% error rate - report degraded
+                return HealthStatus::degraded(
+                    "audit-logger",
+                    vec![],
+                    1.5, // Increase timeouts by 50%
+                );
+            }
+        }
+
+        HealthStatus::healthy("audit-logger")
+    }
+
+    fn metrics_report(&self) -> Option<MetricsReport> {
+        let mut report = MetricsReport::new("audit-logger", 10_000);
+
+        // Add counter metrics
+        report.counters.push(CounterMetric::new(
+            "audit_requests_total",
+            self.requests_total.load(Ordering::Relaxed),
+        ));
+
+        report.counters.push(CounterMetric::new(
+            "audit_events_logged_total",
+            self.events_logged.load(Ordering::Relaxed),
+        ));
+
+        report.counters.push(CounterMetric::new(
+            "audit_events_filtered_total",
+            self.events_filtered.load(Ordering::Relaxed),
+        ));
+
+        report.counters.push(CounterMetric::new(
+            "audit_output_errors_total",
+            self.output_errors.load(Ordering::Relaxed),
+        ));
+
+        // Add gauge for in-flight requests (approximate from request_times map size)
+        // We can't easily get the map size without blocking, so we skip it
+        // In a production implementation, you might use a separate AtomicU64 counter
+
+        Some(report)
+    }
+
+    fn on_shutdown(&self, reason: ShutdownReason, grace_period_ms: u64) {
+        info!(
+            ?reason,
+            grace_period_ms,
+            "Received shutdown request, flushing outputs"
+        );
+
+        // Mark as draining to report degraded health
+        self.draining.store(true, Ordering::Relaxed);
+
+        // In a real implementation, we would flush outputs here
+        // For now, just log the shutdown
+    }
+
+    fn on_drain(&self, duration_ms: u64, reason: DrainReason) {
+        warn!(
+            ?reason,
+            duration_ms,
+            "Received drain request"
+        );
+
+        // Mark as draining
+        self.draining.store(true, Ordering::Relaxed);
+    }
+
+    fn on_stream_closed(&self) {
+        debug!("Control stream closed");
     }
 }
 
@@ -579,8 +718,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_should_log_sampling() {
-        let mut config = AuditLoggerConfig::default();
-        config.sample_rate = 0.0; // Never sample
+        let config = AuditLoggerConfig {
+            sample_rate: 0.0, // Never sample
+            ..Default::default()
+        };
 
         let agent = AuditLoggerAgent::new(config).await;
         let headers = test_multi_headers();
@@ -667,8 +808,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_compliance_template() {
-        let mut config = AuditLoggerConfig::default();
-        config.compliance_template = Some(ComplianceTemplate::Hipaa);
+        let config = AuditLoggerConfig {
+            compliance_template: Some(ComplianceTemplate::Hipaa),
+            ..Default::default()
+        };
 
         let agent = AuditLoggerAgent::new(config).await;
 

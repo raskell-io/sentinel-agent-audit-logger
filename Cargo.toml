@@ -1,6 +1,6 @@
 [package]
 name = "sentinel-agent-audit-logger"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["Raskell <hello@raskell.io>"]
 description = "Structured audit logging agent for Sentinel proxy - compliance-focused logging with PII redaction"
@@ -11,8 +11,10 @@ categories = ["network-programming", "web-programming"]
 readme = "README.md"
 
 [dependencies]
-# Sentinel SDK
-sentinel-agent-sdk = "0.1"
+# Sentinel SDK with v2 protocol support (local path until published)
+sentinel-agent-sdk = { path = "../sentinel-agent-rust-sdk", features = ["v2"] }
+# Direct protocol dependency for v2 metric types
+sentinel-agent-protocol = "0.3"
 
 # Async runtime
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync", "time", "fs", "net", "io-util"] }

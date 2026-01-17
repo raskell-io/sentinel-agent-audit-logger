@@ -356,8 +356,10 @@ fn test_json_formatter_output() {
 
 #[test]
 fn test_json_formatter_pretty_output() {
-    let mut config = FormatConfig::default();
-    config.pretty = true;
+    let config = FormatConfig {
+        pretty: true,
+        ..Default::default()
+    };
     let formatter = create_formatter(&config);
     let event = create_test_event();
 
@@ -370,10 +372,12 @@ fn test_json_formatter_pretty_output() {
 
 #[test]
 fn test_cef_formatter_output() {
-    let mut config = FormatConfig::default();
-    config.format_type = FormatType::Cef;
-    config.device_vendor = "TestVendor".to_string();
-    config.device_product = "TestProduct".to_string();
+    let config = FormatConfig {
+        format_type: FormatType::Cef,
+        device_vendor: "TestVendor".to_string(),
+        device_product: "TestProduct".to_string(),
+        ..Default::default()
+    };
     let formatter = create_formatter(&config);
     let event = create_test_event();
 
@@ -391,9 +395,11 @@ fn test_cef_formatter_output() {
 
 #[test]
 fn test_leef_formatter_output() {
-    let mut config = FormatConfig::default();
-    config.format_type = FormatType::Leef;
-    config.device_vendor = "TestVendor".to_string();
+    let config = FormatConfig {
+        format_type: FormatType::Leef,
+        device_vendor: "TestVendor".to_string(),
+        ..Default::default()
+    };
     let formatter = create_formatter(&config);
     let event = create_test_event();
 
@@ -944,8 +950,10 @@ async fn test_agent_request_duration_tracking() {
 
 #[tokio::test]
 async fn test_agent_compliance_template_applied() {
-    let mut config = AuditLoggerConfig::default();
-    config.compliance_template = Some(ComplianceTemplate::Hipaa);
+    let mut config = AuditLoggerConfig {
+        compliance_template: Some(ComplianceTemplate::Hipaa),
+        ..Default::default()
+    };
 
     // Apply the template manually to verify its effects
     ComplianceTemplate::Hipaa.apply(&mut config);

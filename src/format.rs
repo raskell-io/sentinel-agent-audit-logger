@@ -354,8 +354,10 @@ mod tests {
 
     #[test]
     fn test_json_formatter_pretty() {
-        let mut config = FormatConfig::default();
-        config.pretty = true;
+        let config = FormatConfig {
+            pretty: true,
+            ..Default::default()
+        };
         let formatter = JsonFormatter::new(&config);
         let event = test_event();
 

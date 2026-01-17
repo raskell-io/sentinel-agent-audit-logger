@@ -1,10 +1,12 @@
 //! Sentinel Audit Logger Agent CLI
 //!
 //! A comprehensive audit logging agent for the Sentinel API Gateway.
+//! Supports Protocol v2 with gRPC and UDS transports.
 
 use clap::Parser;
 use sentinel_agent_audit_logger::{AuditLoggerAgent, AuditLoggerConfig};
-use sentinel_agent_sdk::AgentRunner;
+use sentinel_agent_sdk::v2::AgentRunnerV2;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use tracing::{error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -12,7 +14,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 #[derive(Parser, Debug)]
 #[command(
     name = "sentinel-audit-logger",
-    about = "Audit logging agent for Sentinel API Gateway",
+    about = "Audit logging agent for Sentinel API Gateway (v2 protocol)",
     version
 )]
 struct Args {
@@ -23,6 +25,11 @@ struct Args {
     /// Unix socket path for agent communication
     #[arg(short, long, default_value = "/tmp/sentinel-audit-logger.sock")]
     socket: PathBuf,
+
+    /// gRPC server address (e.g., "0.0.0.0:50051")
+    /// When specified, enables gRPC transport in addition to UDS
+    #[arg(long, value_name = "ADDR")]
+    grpc_address: Option<SocketAddr>,
 
     /// Log level (trace, debug, info, warn, error)
     #[arg(short = 'L', long, default_value = "info")]
@@ -89,14 +96,43 @@ async fn main() -> anyhow::Result<()> {
     // Create agent
     let agent = AuditLoggerAgent::new(config).await;
 
-    // Start server using the SDK's AgentRunner
-    info!(socket = %args.socket.display(), "Starting audit logger agent");
+    // Start server using the SDK's AgentRunnerV2 (v2 protocol)
+    info!(
+        socket = %args.socket.display(),
+        grpc_address = ?args.grpc_address,
+        "Starting audit logger agent (v2 protocol)"
+    );
 
-    AgentRunner::new(agent)
-        .with_name("audit-logger")
-        .with_socket(args.socket)
-        .run()
-        .await?;
+    // Configure transport based on CLI options
+    let runner = AgentRunnerV2::new(agent)
+        .with_name("audit-logger");
+
+    // Start with appropriate transport configuration
+    match args.grpc_address {
+        Some(grpc_addr) => {
+            // Both gRPC and UDS
+            info!(
+                grpc_address = %grpc_addr,
+                uds_socket = %args.socket.display(),
+                "Running with gRPC and UDS transports"
+            );
+            runner
+                .with_both(grpc_addr, args.socket)
+                .run()
+                .await?;
+        }
+        None => {
+            // UDS only (default)
+            info!(
+                uds_socket = %args.socket.display(),
+                "Running with UDS transport only"
+            );
+            runner
+                .with_uds(args.socket)
+                .run()
+                .await?;
+        }
+    }
 
     Ok(())
 }
