@@ -589,12 +589,14 @@ impl AgentHandlerV2 for AuditLoggerAgent {
             .with_event(EventType::ResponseHeaders)
             .with_features(AgentFeatures {
                 streaming_body: false,       // Audit logger doesn't need body streaming
+                websocket: false,            // No WebSocket support
+                guardrails: false,           // No guardrails
                 config_push: true,           // Supports runtime config updates
                 health_reporting: true,      // Reports health status
                 metrics_export: true,        // Exports metrics
                 concurrent_requests: 1000,   // Can handle many concurrent requests
+                cancellation: true,          // Supports request cancellation
                 flow_control: false,         // Doesn't need flow control (always allows)
-                health_interval_ms: 10_000,  // Report health every 10 seconds
             })
     }
 
@@ -683,7 +685,7 @@ impl AgentHandlerV2 for AuditLoggerAgent {
         self.draining.store(true, Ordering::Relaxed);
     }
 
-    fn on_stream_closed(&self) {
+    async fn on_stream_closed(&self) {
         debug!("Control stream closed");
     }
 }
